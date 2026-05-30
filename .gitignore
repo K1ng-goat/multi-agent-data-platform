@@ -1,0 +1,62 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.pyo
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+.eggs/
+
+# Virtual environment
+venv/
+.venv/
+env/
+.env
+*.env
+
+# ===== SQLite Database =====
+*.db
+*.sqlite3
+
+# ===== Uploads / Exports =====
+uploads/
+backend/exports/
+*.xlsx
+!requirements.txt
+
+# ===== Node / Next.js =====
+node_modules/
+.next/
+out/
+
+# ===== Environment & Secrets =====
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# ===== IDE =====
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+
+# ===== Misc =====
+*.log
+*.tmp
+*.temp
+coverage/
+.nyc_output/
+
+# ===== Next.js TypeScript =====
+*.tsbuildinfo
+next-env.d.ts
