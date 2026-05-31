@@ -6,19 +6,22 @@ import uuid
 import traceback
 from datetime import datetime
 
-from fastapi import FastAPI, UploadFile, File, Depends
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, status, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import pandas as pd
 import httpx
 
+import config
 import workflow as wf
 import export_service as es
 import theme_service as ts
 import dashboard_service as ds
 import reports_service as rs
 import workflow_engine as we
+from middleware import limiter, rate_limit_exceeded_handler, MaxBodySizeMiddleware
+from slowapi.errors import RateLimitExceeded
 from memory.memory_manager import get_memory_manager
 from database import init_db, SessionLocal
 from chat_model import ChatMessage
@@ -26,30 +29,64 @@ import preference_model
 from user_model import User
 from auth_service import hash_password, verify_password, create_token, get_current_user
 
-app = FastAPI(title="AI Excel Data Agent")
+app = FastAPI(title=config.API_TITLE)
+
+# ── Middleware (order matters: size check → rate limit → CORS) ────
+app.add_middleware(MaxBodySizeMiddleware, max_size=config.MAX_UPLOAD_SIZE_BYTES)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:3001",
-        "http://127.0.0.1:3001",
-    ],
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1):\d{4}$",
+    allow_origins=config.CORS_ORIGINS,
+    allow_origin_regex=config.CORS_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
 )
 
-DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
+# Rate limiter
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+
+DEEPSEEK_BASE_URL = config.DEEPSEEK_BASE_URL
 sessions: dict[str, dict] = {}
 
 
 @app.on_event("startup")
 async def on_startup():
     init_db()
+
+
+# ── File Upload Validation (T4) ───────────────────────────────────
+
+
+def _validate_excel_upload(file: UploadFile) -> None:
+    """Validate uploaded file: extension, MIME type, and size.
+
+    Raises HTTPException on failure — no return value.
+    """
+    errors: list[str] = []
+
+    # 1. Extension check
+    filename = file.filename or ""
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in config.ALLOWED_EXTENSIONS:
+        errors.append(f"不支持的文件类型 '{ext}'，仅接受 .xlsx / .xls")
+
+    # 2. MIME type check
+    content_type = file.content_type or ""
+    if content_type and content_type not in config.ALLOWED_MIME_TYPES:
+        errors.append(f"无效的文件格式，请上传 Excel 文件")
+
+    # 3. File empty check
+    if not filename:
+        errors.append("文件名为空")
+
+    if errors:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="; ".join(errors),
+        )
 
 
 def _persist_chat(session_id: str, role: str, content: str, user_id: int = 0):
@@ -343,6 +380,7 @@ async def me(user: User = Depends(get_current_user)):
 
 @app.post("/upload")
 async def upload_excel(file: UploadFile = File(...)):
+    _validate_excel_upload(file)  # T4: validate before processing
     contents = await file.read()
     df = pd.read_excel(io.BytesIO(contents), engine="openpyxl")
 
@@ -449,7 +487,9 @@ def _generate_charts(df: pd.DataFrame) -> list[dict]:
 
 
 @app.post("/analyze")
-async def analyze_excel(file: UploadFile = File(...), user: User = Depends(get_current_user)):
+@limiter.limit(f"{config.RATE_LIMIT_REQUESTS} per {config.RATE_LIMIT_WINDOW_SEC}s")
+async def analyze_excel(request: Request, file: UploadFile = File(...), user: User = Depends(get_current_user)):
+    _validate_excel_upload(file)  # T4: validate before processing
     print("[analyze] 1. 收到请求 — filename:", file.filename)
 
     contents = await file.read()
@@ -729,7 +769,8 @@ def _execute_tool(df: pd.DataFrame, tool_name: str, args: dict) -> str:
 
 
 @app.post("/workflow")
-async def run_workflow(req: WorkflowRequest):
+@limiter.limit(f"{config.RATE_LIMIT_REQUESTS} per {config.RATE_LIMIT_WINDOW_SEC}s")
+async def run_workflow(request: Request, req: WorkflowRequest, user: User = Depends(get_current_user)):
     session = sessions.get(req.session_id)
     if not session:
         return {"error": "会话已过期，请重新上传 Excel 文件。"}
@@ -800,7 +841,8 @@ async def run_workflow(req: WorkflowRequest):
 
 
 @app.post("/chat")
-async def chat(req: ChatRequest, user: User = Depends(get_current_user)):
+@limiter.limit(f"{config.RATE_LIMIT_REQUESTS} per {config.RATE_LIMIT_WINDOW_SEC}s")
+async def chat(request: Request, req: ChatRequest, user: User = Depends(get_current_user)):
     session = sessions.get(req.session_id)
     if not session:
         return {"mode": "chat", "reply": "会话已过期，请重新上传 Excel 文件。", "steps": []}
@@ -959,7 +1001,8 @@ async def chat(req: ChatRequest, user: User = Depends(get_current_user)):
 # --- Agent Chat Endpoint ---
 
 @app.post("/agent-chat")
-async def agent_chat(req: AgentChatRequest, user: User = Depends(get_current_user)):
+@limiter.limit(f"{config.RATE_LIMIT_REQUESTS} per {config.RATE_LIMIT_WINDOW_SEC}s")
+async def agent_chat(request: Request, req: AgentChatRequest, user: User = Depends(get_current_user)):
     """Multi-Agent chat endpoint — routes through Master Agent → sub-agents."""
     session = sessions.get(req.session_id)
     if not session:
