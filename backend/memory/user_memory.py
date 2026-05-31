@@ -1,10 +1,13 @@
 """UserMemory service — manages persistent user preferences and behavior patterns."""
 from __future__ import annotations
 import json
+import logging
 import traceback
 from datetime import datetime
 from database import SessionLocal
 from memory.user_memory_model import UserMemory
+
+logger = logging.getLogger(__name__)
 
 
 def save_user_memory(user_id: int, category: str, key: str, value: str) -> None:
@@ -38,7 +41,7 @@ def save_user_memory(user_id: int, category: str, key: str, value: str) -> None:
         try:
             db.rollback()
         except Exception:
-            pass
+            logger.exception("[Memory User] ERROR during rollback")
     finally:
         db.close()
 
@@ -120,16 +123,20 @@ def clear_preferences(user_id: int) -> int:
         try:
             db.rollback()
         except Exception:
-            pass
+            logger.exception("[Memory User] ERROR during rollback")
         return 0
     finally:
         db.close()
 
 
 def extract_preferences(user_id: int) -> dict:
-    """Extract structured user preferences for agent context injection."""
+    """Extract structured user preferences for agent context injection.
+
+    Only reads category="preference" entries — this is used to inject
+    user preference context into AI prompts, NOT to read all memory types.
+    """
     print(f"[Memory User] extract_preferences — user={user_id}")
-    memories = get_user_memories(user_id)
+    memories = get_user_memories(user_id, category="preference")
     prefs = {}
     for key, val in memories.items():
         try:

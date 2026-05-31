@@ -1,10 +1,13 @@
 """Long-term Analysis Memory — historical KPI, trend, anomaly, and report storage."""
 from __future__ import annotations
 import json
+import logging
 import traceback
 from datetime import datetime
 from database import SessionLocal
 from memory.analysis_memory_model import AnalysisMemory
+
+logger = logging.getLogger(__name__)
 
 
 def save_analysis(user_id: int, session_id: str, filename: str,
@@ -40,7 +43,7 @@ def save_analysis(user_id: int, session_id: str, filename: str,
         try:
             db.rollback()
         except Exception:
-            pass
+            logger.exception("[Memory LT] ERROR during rollback")
     finally:
         db.close()
 
@@ -118,7 +121,7 @@ def clear_analyses(user_id: int) -> int:
         try:
             db.rollback()
         except Exception:
-            pass
+            logger.exception("[Memory LT] ERROR during rollback")
         return 0
     finally:
         db.close()

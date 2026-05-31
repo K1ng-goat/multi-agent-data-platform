@@ -1,10 +1,13 @@
 """WorkspaceMemory service — persistent workspace state snapshots."""
 from __future__ import annotations
 import json
+import logging
 import traceback
 from datetime import datetime
 from database import SessionLocal
 from memory.workspace_memory_model import WorkspaceMemory
+
+logger = logging.getLogger(__name__)
 
 
 def save_workspace(user_id: int, session_id: str, filename: str,
@@ -54,7 +57,7 @@ def save_workspace(user_id: int, session_id: str, filename: str,
         try:
             db.rollback()
         except Exception:
-            pass
+            logger.exception("[Memory WS] ERROR during rollback")
     finally:
         db.close()
 
@@ -112,7 +115,7 @@ def clear_workspaces(user_id: int) -> int:
         try:
             db.rollback()
         except Exception:
-            pass
+            logger.exception("[Memory WS] ERROR during rollback")
         return 0
     finally:
         db.close()

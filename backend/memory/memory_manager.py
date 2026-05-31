@@ -7,11 +7,14 @@ Provides:
 """
 from __future__ import annotations
 import json
+import logging
 import traceback
 from memory import user_memory as um
 from memory import workspace_memory as wm
 from memory import conversation_memory as cm
 from memory import longterm_memory as lm
+
+logger = logging.getLogger(__name__)
 
 
 class MemoryManager:
@@ -126,7 +129,7 @@ class MemoryManager:
     def get_user_preferences(self, user_id: int) -> dict:
         """Get all user preferences as a flat dict."""
         print(f"[Memory Mgr] get_user_preferences — user={user_id}")
-        return um.get_user_memories(user_id)
+        return um.get_user_memories(user_id, category="preference")
 
     def get_recent_analyses(self, user_id: int, limit: int = 10) -> list[dict]:
         """Get recent analysis memories."""
@@ -154,7 +157,7 @@ class MemoryManager:
         try:
             analyses = lm.get_recent_analyses(user_id, limit=100)
             workspaces = wm.get_workspaces(user_id, limit=100)
-            prefs = um.get_user_memories(user_id)
+            prefs = um.get_user_memories(user_id, category="preference")
             prefs_count = len(prefs)
 
             files = list({a.get("filename", "") for a in analyses if a.get("filename")})
@@ -178,7 +181,7 @@ class MemoryManager:
                 sessions = {c.get("session_id", "") for c in convos if c.get("session_id")}
                 total_conversations = len(sessions)
             except Exception:
-                pass
+                logger.exception("[Memory Mgr] ERROR counting conversation sessions")
 
             return {
                 "total_analyses": len(analyses),
