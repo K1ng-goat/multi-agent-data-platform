@@ -128,24 +128,7 @@ def _upsert_pref(db, key: str, value: str, user_id: int = 0):
         db.add(preference_model.UserPreference(key=key, value=value, user_id=user_id))
 
 
-WORKFLOW_KEYWORDS = [
-    "报告", "日报", "周报", "月报", "生成", "完整分析",
-    "全面分析", "经营分析", "综合分析", "总结报告", "汇总",
-    "深度分析", "复盘", "帮我分析", "做分析", "出报告",
-    "经营情况", "整体分析", "分析报告", "全面评估", "综合评估",
-    "report", "generate", "analyze the", "summarize", "full analysis",
-]
-
-
-def _classify_intent(question: str) -> str:
-    q = question.lower()
-    for kw in WORKFLOW_KEYWORDS:
-        if kw.lower() in q:
-            return "workflow"
-    # Long questions with multiple requirements also → workflow
-    if len(question) > 40:
-        return "workflow"
-    return "chat"
+from intent_classifier import classify_for_chat as _classify_intent
 
 
 class ChatRequest(BaseModel):
