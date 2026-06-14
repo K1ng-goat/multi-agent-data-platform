@@ -26,14 +26,14 @@ export default function NavBar() {
         <div className="flex items-center gap-6">
           <Link href="/" className="flex items-center gap-2 text-white font-bold text-sm">
             <span className="w-6 h-6 rounded bg-blue-500 flex items-center justify-center text-[10px]">AI</span>
-            AI Excel Agent
+            AI Excel 助手
           </Link>
           {!isAuthPage && (
             <nav className="flex items-center gap-1">
-              <Link href="/analytics" className={linkCls(isHome)}>Home</Link>
-              <Link href="/" className={linkCls(isWorkspace)}>Workspace</Link>
-              <Link href="/reports" className={linkCls(isReports)}>Reports</Link>
-              <Link href="/memory" className={linkCls(isMemory)}>Memory</Link>
+              <Link href="/analytics" className={linkCls(isHome)}>首页</Link>
+              <Link href="/" className={linkCls(isWorkspace)}>工作区</Link>
+              <Link href="/reports" className={linkCls(isReports)}>历史报告</Link>
+              <Link href="/memory" className={linkCls(isMemory)}>记忆</Link>
             </nav>
           )}
         </div>

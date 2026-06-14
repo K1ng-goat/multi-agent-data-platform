@@ -9,6 +9,7 @@ import {
 } from "recharts";
 import { useAuth } from "@/lib/AuthContext";
 import { apiFetch } from "@/lib/api";
+import { API_BASE } from "@/lib/config";
 
 // --- Types ---
 interface KpiItem { label: string; value: string; icon: string; change: string }
@@ -108,20 +109,26 @@ export default function AnalyticsPage() {
       return;
     }
     if (!user) return;
-    apiFetch("http://localhost:8000/dashboard")
+    apiFetch(`${API_BASE}/dashboard`)
       .then((r) => r.json())
       .then((d) => setData(d))
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [user, authLoading, router]);
 
-  if (authLoading || !user) {
+  useEffect(() => {
+    if (!authLoading && !user) router.push("/login");
+  }, [authLoading, user, router]);
+
+  if (authLoading) {
     return (
       <div className="flex-1 bg-zinc-50 dark:bg-black flex items-center justify-center">
         <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
+
+  if (!user) return null;
 
   if (loading) {
     return (
@@ -140,9 +147,9 @@ export default function AnalyticsPage() {
         <div className="text-center max-w-md">
           <span className="text-5xl mb-4 block">🏠</span>
           <h2 className="text-xl font-bold text-zinc-800 dark:text-zinc-200 mb-2">概览</h2>
-          <p className="text-sm text-zinc-500 mb-6">在 Workspace 上传 Excel 文件进行 AI 分析后，分析概览将在此展示。</p>
+          <p className="text-sm text-zinc-500 mb-6">在工作区上传 Excel 文件进行 AI 分析后，分析概览将在此展示。</p>
           <Link href="/" className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors">
-            前往 Workspace →
+            前往工作区 →
           </Link>
         </div>
       </div>
@@ -155,7 +162,7 @@ export default function AnalyticsPage() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-bold text-zinc-900 dark:text-zinc-50">Home</h1>
+            <h1 className="text-xl font-bold text-zinc-900 dark:text-zinc-50">首页</h1>
             <p className="text-xs text-zinc-400 mt-0.5">
               最近分析：{data.filename}
               {data.updated_at && <> · {new Date(data.updated_at).toLocaleString("zh-CN")}</>}

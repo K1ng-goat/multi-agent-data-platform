@@ -1,0 +1,38 @@
+[
+  {
+    "id": "stat_001",
+    "category": "statistics",
+    "title": "Z-Score Outlier Detection",
+    "content": "Z = (X - mean) / std. Values with |Z| > 3 are typically outliers.",
+    "keywords": [
+      "z-score",
+      "outlier",
+      "standard deviation",
+      "anomaly"
+    ]
+  },
+  {
+    "id": "stat_002",
+    "category": "statistics",
+    "title": "Correlation Coefficient",
+    "content": "Pearson r ranges from -1 to 1. 0=no correlation, 1=perfect positive, -1=perfect negative.",
+    "keywords": [
+      "correlation",
+      "pearson",
+      "r value",
+      "relationship"
+    ]
+  },
+  {
+    "id": "stat_003",
+    "category": "statistics",
+    "title": "P-Value Interpretation",
+    "content": "p < 0.05 is statistically significant. p < 0.01 is highly significant.",
+    "keywords": [
+      "p-value",
+      "significance",
+      "hypothesis",
+      "statistical"
+    ]
+  }
+]

@@ -1,0 +1,97 @@
+# ===== Multi-Agent Data Platform — Docker Compose =====
+# Start:  docker compose up -d
+# Stop:   docker compose down
+# Logs:   docker compose logs -f
+# Rebuild: docker compose up -d --build
+
+services:
+  nginx:
+    image: nginx:alpine
+    container_name: data-agent-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    restart: unless-stopped
+
+  mysql:
+    image: mysql:8.0
+    container_name: data-agent-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: data_agent
+      MYSQL_USER: data_agent
+      MYSQL_PASSWORD: changeme
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: data-agent-backend
+    ports:
+      - "8001:8000"
+    volumes:
+      # Parquet session files — survive container restart
+      - session_data:/app/session_data
+      # Export files (Excel, Word, PNG)
+      - exports:/app/exports
+      # SQLite DB — bind mount for persistence across rebuilds.
+      # If the file does not exist on host, comment this line out;
+      # the DB will be auto-created inside the container by init_db().
+      # - ./backend/data_agent.db:/app/data_agent.db  # disabled: DB auto-created in container
+    env_file:
+      - .env.production
+    environment:
+      - JWT_SECRET=${JWT_SECRET:-aiexcel-secret-key-change-in-production}
+      - DATABASE_TYPE=${DATABASE_TYPE:-sqlite}
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=data_agent
+      - MYSQL_PASSWORD=changeme
+      - MYSQL_DATABASE=data_agent
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/themes')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=/api
+    container_name: data-agent-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=/api
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
+    driver: local
+  session_data:
+    driver: local
+  exports:
+    driver: local

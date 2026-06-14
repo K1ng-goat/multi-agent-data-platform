@@ -12,3 +12,5 @@ passlib[bcrypt]==1.7.4
 bcrypt==4.0.1
 slowapi==0.1.9
 limits==4.7.1
+pyarrow==24.0.0
+pymysql==1.2.0

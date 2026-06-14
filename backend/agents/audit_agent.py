@@ -124,3 +124,8 @@ class AuditAgent(BaseAgent):
             parts.append(f"发现 {error_count} 个严重问题, {warn_count} 个警告")
         parts.append(advice)
         return "。".join(parts)
+
+
+# T27: register with agent registry
+from .registry import registry
+registry.register("AuditAgent", AuditAgent)

@@ -58,3 +58,8 @@ class ChartAgent(BaseAgent):
             })
 
         return suggestions
+
+
+# T27: register with agent registry
+from .registry import registry
+registry.register("ChartAgent", ChartAgent)

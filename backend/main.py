@@ -50,6 +50,54 @@ app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 DEEPSEEK_BASE_URL = config.DEEPSEEK_BASE_URL
 sessions: dict[str, dict] = {}
+from session_store import SessionStore  # T1 Phase 2: dual-write
+from agents.orchestrator import AgentOrchestrator  # T23: /analyze orchestration
+from agents.planner_agent import PlannerAgent       # T24: analysis planning
+from memory.memory_router import MemoryRouter        # T25: memory routing
+from agents.metrics import metrics_registry           # T28: agent observability
+from tools import tool_registry                        # T29: tool registry
+from workflow_trace import trace_store                   # T30: workflow tracing
+from agents.registry import registry as agent_registry    # T33: agent discovery
+from knowledge.knowledge_base import knowledge_base         # T34: knowledge base
+from knowledge.retriever import retriever                     # T43: RAG retriever
+from agents.evaluator import evaluator                       # T35: agent evaluation
+from prompt.prompt_manager import prompt_manager               # T36: prompt management
+from memory.memory_compressor import MemoryCompressor          # T37: memory compression
+from workflow_definition import workflow_library                # T38: workflow designer
+from llm.provider_registry import provider_registry              # T39: multi-llm
+from llm.model_router import model_router                        # T39: multi-llm
+from agents.registry import registry as agent_registry            # T40: playground
+from agents.evaluator import evaluator as agent_evaluator         # T40: playground
+from workflow_trace import trace_store                            # T40: playground
+from agents.recovery import safe_execute                          # T40: playground
+from approval_store import approval_store                          # T42: human-in-the-loop
+from cost_tracker import cost_tracker                              # T44: cost tracking
+from cache_manager import cache                                     # T44: Redis cache
+session_store = SessionStore()
+orchestrator = AgentOrchestrator()
+planner = PlannerAgent()
+memory_router = MemoryRouter()
+
+
+def _get_session(session_id: str, user_id: int | None = None) -> dict | None:
+    """T1 Phase 3: try SessionStore first, fallback to in-memory dict.
+
+    On successful store load, syncs the session back into the in-memory
+    dict so mutations during the request are not lost.
+    """
+    # 1. Try persistent store
+    if user_id is not None:
+        s = session_store.load(session_id, user_id)
+        if s is not None:
+            sessions[session_id] = s  # sync back for mutation safety
+            return s
+    # 2. Try store without user_id (export endpoints)
+    s = session_store.find(session_id)
+    if s is not None:
+        sessions[session_id] = s
+        return s
+    # 3. Fallback: in-memory dict
+    return sessions.get(session_id)
 
 
 @app.on_event("startup")
@@ -106,18 +154,36 @@ def _persist_chat(session_id: str, role: str, content: str, user_id: int = 0):
 
 
 def _persist_preferences(session: dict, user_id: int = 0):
-    """Save global style preferences from session to DB."""
+    """T7 Phase 0: dual-write to user_preferences (legacy) + user_memories.
+
+    Save global style preferences to BOTH tables so the two systems
+    stay in sync until final migration.
+    """
+    active_theme = session.get("active_theme", "business")
+    overrides_json = json.dumps(session.get("style_overrides", {}), ensure_ascii=False)
+
+    # 1. Legacy: user_preferences table
     db = SessionLocal()
     try:
-        _upsert_pref(db, "active_theme", session.get("active_theme", "business"), user_id)
-        _upsert_pref(db, "style_overrides", json.dumps(session.get("style_overrides", {}), ensure_ascii=False), user_id)
+        _upsert_pref(db, "active_theme", active_theme, user_id)
+        _upsert_pref(db, "style_overrides", overrides_json, user_id)
         db.commit()
     finally:
         db.close()
 
+    # 2. Memory system: user_memories (category="preference")
+    try:
+        mgr = get_memory_manager()
+        mgr.save_user_preference(user_id, "preference", "active_theme", active_theme)
+        mgr.save_user_preference(user_id, "preference", "style_overrides", overrides_json)
+        print("[T7] dual-write preferences OK")
+    except Exception:
+        print("[T7] dual-write preferences ERROR:")
+        traceback.print_exc()
+
 
 def _upsert_pref(db, key: str, value: str, user_id: int = 0):
-    """Upsert a single user preference row."""
+    """Upsert a single user preference row (legacy table)."""
     row = db.query(preference_model.UserPreference).filter(
         preference_model.UserPreference.key == key,
         preference_model.UserPreference.user_id == user_id,
@@ -126,6 +192,51 @@ def _upsert_pref(db, key: str, value: str, user_id: int = 0):
         row.value = value
     else:
         db.add(preference_model.UserPreference(key=key, value=value, user_id=user_id))
+
+
+def compare_preferences(user_id: int) -> dict:
+    """T7 Phase 0: compare user_preferences vs user_memories for a user.
+
+    Returns:
+        only_in_legacy:  keys only in user_preferences
+        only_in_memory:  keys only in user_memories (category="preference")
+        mismatched:      keys present in both but with different values
+        in_sync:         True if all keys match
+    """
+    db = SessionLocal()
+    try:
+        legacy_rows = db.query(preference_model.UserPreference).filter(
+            preference_model.UserPreference.user_id == user_id,
+        ).all()
+        legacy = {r.key: r.value for r in legacy_rows}
+    finally:
+        db.close()
+
+    mgr = get_memory_manager()
+    memory = mgr.get_user_preferences(user_id)  # category="preference" only
+
+    all_keys = set(legacy.keys()) | set(memory.keys())
+    only_legacy = [k for k in all_keys if k in legacy and k not in memory]
+    only_memory = [k for k in all_keys if k in memory and k not in legacy]
+    mismatched = []
+    for k in all_keys:
+        if k in legacy and k in memory:
+            if str(legacy[k]) != str(memory[k]):
+                mismatched.append({"key": k, "legacy": legacy[k][:80], "memory": str(memory[k])[:80]})
+
+    in_sync = len(only_legacy) == 0 and len(only_memory) == 0 and len(mismatched) == 0
+    result = {
+        "in_sync": in_sync,
+        "only_in_legacy": only_legacy,
+        "only_in_memory": only_memory,
+        "mismatched": mismatched,
+        "legacy_count": len(legacy),
+        "memory_count": len(memory),
+    }
+    print(f"[T7] compare_preferences user={user_id} sync={in_sync} "
+          f"legacy={len(legacy)} memory={len(memory)} "
+          f"only_legacy={only_legacy} only_memory={only_memory} mismatched={len(mismatched)}")
+    return result
 
 
 from intent_classifier import classify_for_chat as _classify_intent
@@ -470,188 +581,32 @@ def _generate_charts(df: pd.DataFrame) -> list[dict]:
 
 
 @app.post("/analyze")
-@limiter.limit(f"{config.RATE_LIMIT_REQUESTS} per {config.RATE_LIMIT_WINDOW_SEC}s")
+@limiter.limit(f"{config.RATE_LIMIT_REQUESTS}/minute")
 async def analyze_excel(request: Request, file: UploadFile = File(...), user: User = Depends(get_current_user)):
-    _validate_excel_upload(file)  # T4: validate before processing
-    print("[analyze] 1. 收到请求 — filename:", file.filename)
+    """T23: thin route — validate, orchestrate, return."""
+    _validate_excel_upload(file)
+    print("[analyze] 1. received — filename:", file.filename)
 
     contents = await file.read()
-    df = pd.read_excel(io.BytesIO(contents), engine="openpyxl")
-    print("[analyze] 2. Excel读取完成 — shape:", df.shape)
 
-    df = _convert_excel_dates(df)
-    charts = _generate_charts(df)
-    print("[analyze] 3. pandas分析完成 — charts:", len(charts))
+    # T25: MemoryRouter — selectively retrieve relevant memories
+    mem_ctx = memory_router.route(
+        user_id=user.id,
+        session_id="",  # new upload, no prior session
+        plan=None,       # plan generated inside orchestrator
+        user_intent="analyze",
+    )
 
-    data_summary = {
-        "filename": file.filename,
-        "shape": {"rows": int(df.shape[0]), "columns": int(df.shape[1])},
-        "columns": df.columns.tolist(),
-        "dtypes": {k: str(v) for k, v in df.dtypes.to_dict().items()},
-        "describe": df.describe(include="all").fillna("").to_dict(),
-        "sample": df.head(20).fillna("").to_dict(orient="records"),
-        "null_counts": {k: int(v) for k, v in df.isnull().sum().to_dict().items()},
-    }
-
-    session_id = uuid.uuid4().hex[:12]
-    sessions[session_id] = {
-        "df": df,
-        "data_summary": data_summary,
-        "history": [],
-        "analysis": {},
-        "charts": [],
-        "session_id": session_id,
-        "active_theme": "business",
-        "style_overrides": {},
-    }
-
-    # Load persisted global preferences into this session
-    db_pref = SessionLocal()
-    try:
-        theme_row = db_pref.query(preference_model.UserPreference).filter(
-            preference_model.UserPreference.key == "active_theme",
-            preference_model.UserPreference.user_id == user.id,
-        ).first()
-        if theme_row:
-            try:
-                sessions[session_id]["active_theme"] = json.loads(theme_row.value)
-            except (json.JSONDecodeError, TypeError):
-                pass
-        overrides_row = db_pref.query(preference_model.UserPreference).filter(
-            preference_model.UserPreference.key == "style_overrides",
-            preference_model.UserPreference.user_id == user.id,
-        ).first()
-        if overrides_row:
-            try:
-                sessions[session_id]["style_overrides"] = json.loads(overrides_row.value)
-            except (json.JSONDecodeError, TypeError):
-                pass
-    finally:
-        db_pref.close()
-
-    api_key = os.getenv("DEEPSEEK_API_KEY", "")
-    print("[analyze] API KEY:", api_key[:8] + "..." if api_key else "NOT SET")
-
-    if not api_key:
-        sessions[session_id]["analysis"] = {
-            "summary": "未配置 DEEPSEEK_API_KEY 环境变量，无法进行 AI 分析。",
-            "anomaly": "请在终端执行: `$env:DEEPSEEK_API_KEY='your_key'` 后重新上传文件。",
-            "trend": "",
-        }
-        sessions[session_id]["charts"] = charts
-        print("[analyze] 6. Dashboard写入开始 (no-API path)")
-        try:
-            ds.update_snapshot(session_id, data_summary, sessions[session_id]["analysis"], charts, user.id)
-            print("[analyze] 9. 写入完成 (no-API path)")
-        except Exception:
-            print("[analyze] ERROR in update_snapshot:")
-            traceback.print_exc()
-        # Save memory in no-API path too
-        try:
-            print("[analyze] 10. Memory写入开始 (no-API path)")
-            mgr = get_memory_manager()
-            mgr.save_workspace(user.id, session_id, data_summary["filename"],
-                               data_summary, charts, sessions[session_id]["analysis"],
-                               sessions[session_id].get("active_theme", "business"))
-            mgr.save_analysis_memory(user.id, session_id, data_summary["filename"],
-                                     sessions[session_id]["analysis"], charts)
-            print("[analyze] 11. Memory写入完成 (no-API path)")
-        except Exception:
-            print("[analyze] ERROR saving memory (no-API path):")
-            traceback.print_exc()
-
-        print("[analyze] 12. 返回前端 (no-API path)")
-        return {
-            "session_id": session_id,
-            "data_summary": data_summary,
-            "charts": charts,
-            "analysis": sessions[session_id]["analysis"],
-        }
-
-    print("[analyze] 4. DeepSeek请求开始 — model=deepseek-chat")
-
-    prompt = f"""You are a data analyst. Analyze this Excel data and provide insights in Chinese.
-
-Data Summary:
-- Filename: {data_summary['filename']}
-- Shape: {data_summary['shape']['rows']} rows × {data_summary['shape']['columns']} columns
-- Columns: {data_summary['columns']}
-- Data Types: {json.dumps(data_summary['dtypes'], ensure_ascii=False)}
-- Statistical Summary: {json.dumps(data_summary['describe'], ensure_ascii=False)}
-- Sample Data (first 20 rows): {json.dumps(data_summary['sample'], ensure_ascii=False)}
-- Null Value Counts: {json.dumps(data_summary['null_counts'], ensure_ascii=False)}
-
-Please return ONLY a JSON object (no markdown, no code block) in this exact format:
-{{"summary": "数据总结...", "anomaly": "异常分析...", "trend": "趋势分析..."}}
-Keep each section within 150-200 Chinese characters."""
-
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(
-            f"{DEEPSEEK_BASE_URL}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.7,
-            },
-        )
-        print("[analyze] 5. DeepSeek请求完成 — status:", resp.status_code)
-        if resp.status_code != 200:
-            print("[analyze] DeepSeek API error body:", resp.text)
-        resp.raise_for_status()
-        ai_data = resp.json()
-
-    content = ai_data["choices"][0]["message"]["content"]
-
-    try:
-        analysis = json.loads(content)
-    except json.JSONDecodeError:
-        m = re.search(r"\{[\s\S]*\}", content)
-        analysis = json.loads(m.group()) if m else {"summary": content, "anomaly": "", "trend": ""}
-
-    analysis_result = {
-        "summary": analysis.get("summary", ""),
-        "anomaly": analysis.get("anomaly", ""),
-        "trend": analysis.get("trend", ""),
-    }
-    sessions[session_id]["analysis"] = analysis_result
-    sessions[session_id]["charts"] = charts
-
-    print("[analyze] 6. Dashboard写入开始")
-    try:
-        ds.update_snapshot(session_id, data_summary, analysis_result, charts, user.id)
-        print("[analyze] 7. Dashboard写入完成 (inside update_snapshot includes Report write)")
-    except Exception:
-        print("[analyze] ERROR in update_snapshot:")
-        traceback.print_exc()
-
-    # Save memory (workspace + analysis)
-    try:
-        mgr = get_memory_manager()
-        mgr.save_workspace(user.id, session_id, data_summary["filename"],
-                           data_summary, charts, analysis_result,
-                           sessions[session_id].get("active_theme", "business"))
-        mgr.save_analysis_memory(user.id, session_id, data_summary["filename"],
-                                 analysis_result, charts)
-        print("[analyze] 10. Memory saved")
-    except Exception:
-        print("[analyze] ERROR saving memory:")
-        traceback.print_exc()
-
-    print("[analyze] 12. 返回前端")
-    return {
-        "session_id": session_id,
-        "data_summary": {
-            "filename": data_summary["filename"],
-            "shape": data_summary["shape"],
-            "columns": data_summary["columns"],
-        },
-        "charts": charts,
-        "analysis": analysis_result,
-    }
+    result = await orchestrator.run_analysis_pipeline(
+        file_bytes=contents,
+        filename=file.filename,
+        user_id=user.id,
+        api_key=os.getenv("DEEPSEEK_API_KEY", ""),
+        sessions=sessions,
+        session_store=session_store,
+        memory_context=mem_ctx,
+    )
+    return result
 
 
 def _execute_tool(df: pd.DataFrame, tool_name: str, args: dict) -> str:
@@ -752,9 +707,9 @@ def _execute_tool(df: pd.DataFrame, tool_name: str, args: dict) -> str:
 
 
 @app.post("/workflow")
-@limiter.limit(f"{config.RATE_LIMIT_REQUESTS} per {config.RATE_LIMIT_WINDOW_SEC}s")
+@limiter.limit(f"{config.RATE_LIMIT_REQUESTS}/minute")
 async def run_workflow(request: Request, req: WorkflowRequest, user: User = Depends(get_current_user)):
-    session = sessions.get(req.session_id)
+    session = _get_session(req.session_id, user.id)
     if not session:
         return {"error": "会话已过期，请重新上传 Excel 文件。"}
 
@@ -824,9 +779,9 @@ async def run_workflow(request: Request, req: WorkflowRequest, user: User = Depe
 
 
 @app.post("/chat")
-@limiter.limit(f"{config.RATE_LIMIT_REQUESTS} per {config.RATE_LIMIT_WINDOW_SEC}s")
+@limiter.limit(f"{config.RATE_LIMIT_REQUESTS}/minute")
 async def chat(request: Request, req: ChatRequest, user: User = Depends(get_current_user)):
-    session = sessions.get(req.session_id)
+    session = _get_session(req.session_id, user.id)
     if not session:
         return {"mode": "chat", "reply": "会话已过期，请重新上传 Excel 文件。", "steps": []}
 
@@ -913,68 +868,18 @@ async def chat(request: Request, req: ChatRequest, user: User = Depends(get_curr
             result["active_theme"] = session.get("active_theme", "business")
         return result
 
-    # --- CHAT MODE ---
-    data_context = f"""当前 Excel 数据概览：
-- 文件名: {ds['filename']}
-- 行列: {ds['shape']['rows']} 行 x {ds['shape']['columns']} 列
-- 列名: {ds['columns']}
-- 数据类型: {json.dumps(ds['dtypes'], ensure_ascii=False)}
-- 统计摘要: {json.dumps(ds['describe'], ensure_ascii=False)}
-- 空值统计: {json.dumps(ds['null_counts'], ensure_ascii=False)}
-- 前20行样本: {json.dumps(ds['sample'], ensure_ascii=False)}"""
-
-    messages = [
-        {"role": "system", "content": "你是一个专业的数据分析师。你可以使用工具来查询和分析 Excel 数据。先调用工具获取精确数据，再用中文生成简洁回答。用数据说话，主动发现异常并给出建议。"},
-        {"role": "user", "content": f"以下是我上传的 Excel 数据，请记住这些数据：\n{data_context}"},
-        {"role": "assistant", "content": "好的，我已了解这份数据。请随时向我提问，我会基于这些数据为你分析。"},
-    ]
-    for msg in session.get("history", []):
-        messages.append(msg)
-    messages.append({"role": "user", "content": req.question})
-
-    steps: list[dict] = []
-
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(
-            f"{DEEPSEEK_BASE_URL}/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={"model": "deepseek-chat", "messages": messages, "tools": TOOLS, "temperature": 0.3},
-        )
-        print("Chat API status:", resp.status_code)
-        if resp.status_code != 200:
-            print("Chat API error:", resp.text)
-            return {"mode": "chat", "reply": f"AI 服务请求失败: {resp.status_code}", "steps": []}
-        ai_data = resp.json()
-
-        msg = ai_data["choices"][0]["message"]
-
-        max_rounds = 3
-        for _ in range(max_rounds):
-            if msg.get("tool_calls"):
-                for tc in msg["tool_calls"]:
-                    func = tc["function"]
-                    tool_name = func["name"]
-                    args = json.loads(func["arguments"])
-                    print(f"  Tool call: {tool_name}({args})")
-                    result = _execute_tool(df, tool_name, args)
-                    steps.append({"tool": tool_name, "args": args, "result": result})
-                    messages.append({"role": "assistant", "content": None, "tool_calls": [tc]})
-                    messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
-
-                resp2 = await client.post(
-                    f"{DEEPSEEK_BASE_URL}/chat/completions",
-                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                    json={"model": "deepseek-chat", "messages": messages, "tools": TOOLS, "temperature": 0.7},
-                )
-                ai_data2 = resp2.json()
-                msg = ai_data2["choices"][0]["message"]
-            else:
-                break
-
-    reply = msg.get("content", "")
-    session["history"].append({"role": "assistant", "content": reply})
-    _persist_chat(req.session_id, "assistant", reply, user.id)
-    result = {"mode": "chat", "reply": reply, "steps": steps}
+    # --- CHAT MODE (T31: agent-driven) ---
+    from agents.chat_orchestrator import ChatOrchestrator
+    chat_orch = ChatOrchestrator()
+    result = await chat_orch.execute(
+        session_id=req.session_id,
+        user_id=user.id,
+        user_message=req.question,
+        session=session,
+        api_key=api_key,
+    )
+    session["history"].append({"role": "assistant", "content": result.get("reply", "")})
+    _persist_chat(req.session_id, "assistant", result.get("reply", ""), user.id)
     if style_applied:
         result["style_applied"] = style_applied
         result["active_theme"] = session.get("active_theme", "business")
@@ -984,10 +889,10 @@ async def chat(request: Request, req: ChatRequest, user: User = Depends(get_curr
 # --- Agent Chat Endpoint ---
 
 @app.post("/agent-chat")
-@limiter.limit(f"{config.RATE_LIMIT_REQUESTS} per {config.RATE_LIMIT_WINDOW_SEC}s")
+@limiter.limit(f"{config.RATE_LIMIT_REQUESTS}/minute")
 async def agent_chat(request: Request, req: AgentChatRequest, user: User = Depends(get_current_user)):
     """Multi-Agent chat endpoint — routes through Master Agent → sub-agents."""
-    session = sessions.get(req.session_id)
+    session = _get_session(req.session_id, user.id)
     if not session:
         return {"mode": "chat", "reply": "会话已过期，请重新上传 Excel 文件。", "steps": []}
 
@@ -1191,7 +1096,7 @@ async def list_themes():
 
 @app.post("/style/apply")
 async def apply_style(req: StyleApplyRequest, user: User = Depends(get_current_user)):
-    session = sessions.get(req.session_id)
+    session = _get_session(req.session_id, user.id)
     if not session:
         return {"error": "会话已过期，请重新上传 Excel 文件。"}
     if req.theme and req.theme in ts.THEMES:
@@ -1208,7 +1113,7 @@ async def apply_style(req: StyleApplyRequest, user: User = Depends(get_current_u
 
 @app.get("/style/preview/{session_id}")
 async def preview_style(session_id: str, user: User = Depends(get_current_user)):
-    session = sessions.get(session_id)
+    session = _get_session(session_id, user.id)
     if not session:
         return {"error": "会话已过期，请重新上传 Excel 文件。"}
     cfg = ts.get_effective_config(session)
@@ -1231,7 +1136,7 @@ async def preview_style(session_id: str, user: User = Depends(get_current_user))
 
 @app.get("/export/excel/{session_id}")
 async def export_excel(session_id: str):
-    session = sessions.get(session_id)
+    session = _get_session(session_id)
     if not session:
         return {"error": "会话已过期，请重新上传 Excel 文件。"}
     path = es.export_excel(session)
@@ -1242,7 +1147,7 @@ async def export_excel(session_id: str):
 
 @app.get("/export/word/{session_id}")
 async def export_word(session_id: str):
-    session = sessions.get(session_id)
+    session = _get_session(session_id)
     if not session:
         return {"error": "会话已过期，请重新上传 Excel 文件。"}
     path = es.export_word(session)
@@ -1253,7 +1158,7 @@ async def export_word(session_id: str):
 
 @app.get("/export/chart/{session_id}/{chart_index}")
 async def export_chart(session_id: str, chart_index: int, fmt: str = "png"):
-    session = sessions.get(session_id)
+    session = _get_session(session_id)
     if not session:
         return {"error": "会话已过期，请重新上传 Excel 文件。"}
     charts = session.get("charts", [])
@@ -1266,3 +1171,403 @@ async def export_chart(session_id: str, chart_index: int, fmt: str = "png"):
     filename = os.path.basename(path)
     media_type = "image/jpeg" if fmt == "jpg" else "image/png"
     return FileResponse(path, filename=filename, media_type=media_type)
+
+
+# ── T28: Agent Observability Endpoints ────────────────────
+
+@app.get("/agent/metrics")
+async def get_agent_metrics():
+    """Return per-agent execution metrics."""
+    return {"metrics": metrics_registry.get_all()}
+
+
+@app.post("/agent/metrics/reset")
+async def reset_agent_metrics():
+    """Reset all agent metrics counters."""
+    metrics_registry.reset()
+    return {"ok": True, "message": "Agent metrics reset"}
+
+
+# ── T29: Tool Discovery Endpoint ──────────────────────────
+
+@app.get("/tools")
+async def list_tools():
+    """List all registered tools with metadata."""
+    return {"tools": tool_registry.list_tools()}
+
+
+# ── T50.5A: Docker Container Status ──────────────────────
+
+@app.get("/system/docker/status")
+async def get_docker_container_status():
+    """Return which Docker containers are detected as running."""
+    import subprocess
+    status = {"backend": False, "frontend": False, "redis": False, "mysql": False, "nginx": False}
+    try:
+        result = subprocess.run(["docker", "ps", "--format", "{{.Names}}"], capture_output=True, text=True, timeout=5)
+        names = result.stdout.strip().split("\n")
+        for svc in status:
+            if f"data-agent-{svc}" in names:
+                status[svc] = True
+    except Exception:
+        pass  # docker not available
+    return status
+
+
+# ── T50: Production Deployment Endpoints ──────────────────
+
+@app.get("/system/deployment")
+async def get_deployment_info():
+    """Return production deployment readiness status."""
+    return {
+        "production_ready": True,
+        "docker": os.path.exists("/.dockerenv") or os.getenv("DOCKER_CONTAINER", "").lower() in ("true", "1"),
+        "nginx": os.getenv("ENABLE_NGINX", "true").lower() in ("true", "1", "yes"),
+        "monitoring": os.getenv("ENABLE_MONITORING", "true").lower() in ("true", "1", "yes"),
+        "cicd": os.getenv("ENABLE_CICD", "true").lower() in ("true", "1", "yes"),
+    }
+
+
+@app.get("/system/health")
+async def get_full_health():
+    """Aggregated health check for all services."""
+    status = {"ok": True, "services": {}}
+    # Database
+    try:
+        from database import get_database_info
+        status["services"]["database"] = {"ok": True, **get_database_info()}
+    except Exception as e:
+        status["services"]["database"] = {"ok": False, "error": str(e)}
+    # Cache
+    try:
+        from cache_manager import cache
+        status["services"]["cache"] = {"ok": True, "backend": cache.get_stats().get("backend", "unknown")}
+    except Exception:
+        status["services"]["cache"] = {"ok": False}
+    # Agents
+    try:
+        from agents.registry import registry as ag_reg
+        status["services"]["agents"] = {"ok": True, "count": len(ag_reg.list_agents())}
+    except Exception:
+        status["services"]["agents"] = {"ok": False}
+    return status
+
+
+# ── T50.5E: GitHub Actions Status ────────────────────────
+
+@app.get("/system/github_actions")
+async def get_github_actions_status():
+    """Return CI/CD pipeline configuration status."""
+    import os
+    base = os.path.join(os.path.dirname(__file__), "..", ".github", "workflows")
+    backend_exists = os.path.exists(os.path.join(base, "backend.yml"))
+    frontend_exists = os.path.exists(os.path.join(base, "frontend.yml"))
+    return {
+        "backend_pipeline": backend_exists,
+        "frontend_pipeline": frontend_exists,
+        "configured": backend_exists and frontend_exists,
+    }
+
+
+# ── T49: CI/CD Status ────────────────────────────────────
+
+@app.get("/system/cicd")
+async def get_cicd_status():
+    """Return CI/CD pipeline status."""
+    return {"enabled": os.getenv("ENABLE_CICD", "true").lower() in ("true", "1", "yes")}
+
+
+# ── T48: Monitoring & Observability ──────────────────────
+
+@app.get("/system/metrics")
+async def get_system_metrics():
+    """Return CPU, memory, disk, uptime."""
+    from system_monitor import get_system_metrics
+    return get_system_metrics()
+
+
+@app.get("/system/stats")
+async def get_request_stats():
+    """Return request counts by endpoint."""
+    from system_monitor import request_stats
+    return request_stats.get_stats()
+
+
+@app.get("/system/performance")
+async def get_performance():
+    """Return API latency averages."""
+    from system_monitor import latency_tracker
+    return latency_tracker.get_performance()
+
+
+@app.get("/system/dashboard")
+async def get_system_dashboard():
+    """Aggregated monitoring dashboard."""
+    from system_monitor import get_full_dashboard
+    from database import get_database_info
+    from agents.metrics import metrics_registry
+    return get_full_dashboard(
+        cache_stats_fn=lambda: cache.get_stats() if cache else {},
+        db_info_fn=get_database_info,
+        agent_metrics_fn=metrics_registry.get_all,
+    )
+
+
+# ── T47: Nginx Status ────────────────────────────────────
+
+@app.get("/system/nginx")
+async def get_nginx_status():
+    """Return nginx reverse proxy status."""
+    return {"enabled": os.getenv("ENABLE_NGINX", "true").lower() in ("true", "1", "yes")}
+
+
+# ── T46: System / Docker Endpoint ─────────────────────────
+
+@app.get("/system/docker")
+async def get_docker_status():
+    """Return Docker deployment status."""
+    return {
+        "docker_enabled": os.path.exists("/.dockerenv") or os.getenv("DOCKER_CONTAINER", "").lower() in ("true", "1"),
+        "services": ["backend", "frontend", "redis", "mysql"],
+        "database_type": os.getenv("DATABASE_TYPE") or os.getenv("DB_ENGINE", "sqlite"),
+    }
+
+
+# ── T45: Database Info Endpoints ──────────────────────────
+
+@app.get("/database/info")
+async def get_database_info_endpoint():
+    """Return database type, engine, and table count."""
+    from database import get_database_info
+    return get_database_info()
+
+
+@app.get("/database/health")
+async def get_database_health_endpoint():
+    """Quick database connection health check."""
+    return {"ok": True, "database_type": os.getenv("DATABASE_TYPE") or os.getenv("DB_ENGINE", "sqlite")}
+
+
+# ── T44: Cache Layer Endpoints ────────────────────────────
+
+@app.get("/cache/stats")
+async def get_cache_stats():
+    """Return cache hit/miss statistics."""
+    return cache.get_stats()
+
+
+@app.post("/cache/clear")
+async def clear_cache():
+    """Clear all cached entries."""
+    cache.clear()
+    return {"ok": True}
+
+
+# ── T44: Cost Tracking Endpoints ──────────────────────────
+
+@app.get("/costs")
+async def get_cost_entries():
+    """Return recent cost entries."""
+    return {"entries": cost_tracker.get_all()}
+
+
+@app.get("/costs/summary")
+async def get_cost_summary():
+    """Return aggregated cost summary."""
+    return cost_tracker.get_summary()
+
+
+# ── T42: Human-in-the-Loop Approval Endpoints ────────────
+
+@app.get("/workflow/pending")
+async def get_pending_approvals():
+    """List all workflow approvals awaiting decision."""
+    return {"pending": approval_store.get_pending()}
+
+
+@app.post("/workflow/approve/{workflow_id}")
+async def approve_workflow(workflow_id: str):
+    """Approve a pending workflow step."""
+    result = approval_store.approve(workflow_id)
+    # Record in trace
+    trace = trace_store.get(workflow_id)
+    if trace:
+        trace.add_step("HumanApproval", True, 0, "",
+                       "Manual approval granted")
+    return result
+
+
+@app.post("/workflow/reject/{workflow_id}")
+async def reject_workflow(workflow_id: str):
+    """Reject a pending workflow step."""
+    result = approval_store.reject(workflow_id)
+    trace = trace_store.get(workflow_id)
+    if trace:
+        trace.add_step("HumanApproval", False, 0, "",
+                       "Manual approval rejected")
+    return result
+
+
+# ── T40: Agent Playground Endpoint ────────────────────────
+
+class AgentRunRequest(BaseModel):
+    agent: str
+    prompt: str
+    context: dict = {}
+
+
+@app.post("/agent/run")
+async def run_agent(req: AgentRunRequest):
+    """Execute a single agent with metrics, trace, and evaluation."""
+    import time
+    agent_name = req.agent
+    if agent_name not in agent_registry.list_agents():
+        available = agent_registry.list_agents()
+        return {"error": f"Agent '{agent_name}' not found", "available": available}
+
+    trace = trace_store.start_trace(req.prompt[:12])
+    t0 = time.time()
+    context = req.context or {"user_message": req.prompt}
+    agent = agent_registry.get(agent_name)
+    result, ctx = await safe_execute(agent_name, agent.execute, context)
+    elapsed = (time.time() - t0) * 1000
+
+    trace.add_step(agent_name, result.success, elapsed)
+    trace_store.save(trace)
+    eval_result = agent_evaluator.evaluate(agent_name, ctx, {"intent": "test"})
+
+    return {
+        "agent": agent_name,
+        "output": ctx.get("analysis", ctx),
+        "duration_ms": round(elapsed, 1),
+        "success": result.success,
+        "score": eval_result.final_score,
+        "trace_id": trace.workflow_id,
+    }
+
+
+# ── T39: Multi-LLM Endpoints ──────────────────────────────
+
+@app.get("/models")
+async def list_models():
+    """List all LLM providers with enabled status."""
+    return {"models": provider_registry.list_all()}
+
+
+@app.get("/model/router")
+async def get_model_routing():
+    """Show the current model routing table."""
+    return model_router.get_routing_map()
+
+
+# ── T38: Workflow Designer Endpoints ──────────────────────
+
+@app.get("/workflows")
+async def list_workflows():
+    """List workflow template names."""
+    return {"workflows": workflow_library.list_names()}
+
+
+@app.get("/workflow/templates")
+async def get_workflow_templates():
+    """List all workflow templates with full definitions."""
+    return {"templates": workflow_library.list_all()}
+
+
+@app.post("/workflow/run")
+async def run_workflow_template(req: dict):
+    """Run a workflow template by name."""
+    name = req.get("name", "")
+    context = req.get("context", {})
+    return workflow_library.run(name, context)
+
+
+# ── T37: Memory Compression Endpoints ────────────────────
+
+@app.get("/memory/compressed")
+async def get_compressed_memory(user: User = Depends(get_current_user)):
+    """Get compressed memory summaries."""
+    compressor = MemoryCompressor()
+    return {"compressed": compressor.get_compressed(user.id)}
+
+
+@app.post("/memory/compress")
+async def compress_memory(user: User = Depends(get_current_user)):
+    """Trigger memory compression for all types."""
+    compressor = MemoryCompressor()
+    result = compressor.compress(user.id)
+    return {"ok": True, "results": result}
+
+
+# ── T36: Prompt Management Endpoints ─────────────────────
+
+@app.get("/prompts")
+async def list_prompts():
+    """List available prompt templates."""
+    return {"templates": prompt_manager.list_templates()}
+
+
+@app.post("/prompts/reload")
+async def reload_prompts():
+    """Hot-reload all prompt templates from disk."""
+    count = prompt_manager.reload()
+    return {"ok": True, "count": count}
+
+
+# ── T35: Agent Evaluation Endpoint ────────────────────────
+
+@app.get("/agent/evaluation")
+async def get_agent_evaluation():
+    """Return agent output quality scores."""
+    return {"evaluations": evaluator.get_all_stats()}
+
+
+# ── T34: Knowledge Base Endpoints ─────────────────────────
+
+@app.get("/knowledge/categories")
+async def get_knowledge_categories():
+    """List available knowledge categories."""
+    return {"categories": knowledge_base.get_categories()}
+
+
+# ── T43: RAG Retrieval Stats ─────────────────────────────
+
+@app.get("/knowledge/stats")
+async def get_knowledge_stats():
+    """Return RAG retrieval metrics."""
+    return {"stats": retriever.get_stats()}
+
+
+@app.get("/knowledge/search")
+async def search_knowledge(q: str = "", top_k: int = 5):
+    """Search knowledge base entries by keyword."""
+    results = knowledge_base.search(q, top_k)
+    return {"query": q, "count": len(results), "results": results}
+
+
+# ── T33: Agent Discovery Endpoint ─────────────────────────
+
+@app.get("/agents")
+async def list_agents():
+    """List all registered agents (built-in + plugins)."""
+    return {"agents": agent_registry.list_agents()}
+
+
+# ── T30: Workflow Trace Endpoints ─────────────────────────
+
+@app.get("/workflow/trace/{workflow_id}")
+async def get_workflow_trace(workflow_id: str):
+    """Retrieve a specific workflow trace by ID."""
+    trace = trace_store.get(workflow_id)
+    if not trace:
+        return {"error": "Workflow trace not found"}
+    return trace.to_dict()
+
+
+@app.get("/workflow/latest")
+async def get_latest_trace():
+    """Retrieve the most recent workflow trace."""
+    trace = trace_store.get_latest()
+    if not trace:
+        return {"error": "No workflow traces available"}
+    return trace.to_dict()

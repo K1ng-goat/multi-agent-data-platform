@@ -9,5 +9,5 @@ class UserPreference(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, default=0)
-    key = Column(String, nullable=False)
-    value = Column(Text, default="")
+    key = Column(String(255), nullable=False)
+    value = Column(Text)

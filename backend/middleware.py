@@ -41,7 +41,7 @@ def _rate_key_func(request: Request) -> str:
 
 limiter = Limiter(
     key_func=_rate_key_func,
-    default_limits=[f"{RATE_LIMIT_REQUESTS} per {RATE_LIMIT_WINDOW_SEC}s"],
+    default_limits=[f"{RATE_LIMIT_REQUESTS}/minute"],
     storage_uri="memory://",
 )
 

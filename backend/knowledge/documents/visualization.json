@@ -1,0 +1,28 @@
+[
+  {
+    "id": "viz_001",
+    "category": "visualization",
+    "title": "Chart Selection Guide",
+    "content": "Line=trends over time, Bar=category comparison, Pie=proportion (use sparingly), Scatter=correlation.",
+    "keywords": [
+      "chart",
+      "line",
+      "bar",
+      "pie",
+      "scatter",
+      "visualization"
+    ]
+  },
+  {
+    "id": "viz_002",
+    "category": "visualization",
+    "title": "Color Best Practices",
+    "content": "Use sequential colors for ordered data, diverging for deviation, qualitative for categories. Limit to 6-8 colors.",
+    "keywords": [
+      "color",
+      "palette",
+      "theme",
+      "accessibility"
+    ]
+  }
+]

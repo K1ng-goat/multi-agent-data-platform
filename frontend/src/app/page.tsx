@@ -8,6 +8,7 @@ import {
 } from "recharts";
 import { useAuth } from "@/lib/AuthContext";
 import { apiFetch } from "@/lib/api";
+import { API_BASE } from "@/lib/config";
 import { useWorkspace } from "@/lib/WorkspaceContext";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import type {
@@ -199,17 +200,17 @@ function IntentBadge({ mode }: { mode: "chat" | "workflow" | "agent" }) {
   if (mode === "agent") {
     return (
       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-100 text-emerald-700 border border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-800">
-        &#9883; Agent
+        &#9883; 智能体
       </span>
     );
   }
   return mode === "workflow" ? (
     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-purple-100 text-purple-700 border border-purple-200 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-800">
-      &#9883; Workflow
+      &#9883; 工作流
     </span>
   ) : (
     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-100 text-blue-700 border border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800">
-      &#9998; Chat
+      &#9998; 对话
     </span>
   );
 }
@@ -239,13 +240,13 @@ export default function Home() {
 
   useEffect(() => {
     if (themes.length > 0) return; // already loaded
-    apiFetch("http://localhost:8000/themes").then(r => r.json()).then(d => workspace.setThemes(d.themes || [])).catch(() => {});
+    apiFetch(`${API_BASE}/themes`).then(r => r.json()).then(d => workspace.setThemes(d.themes || [])).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [themes.length]);
 
   const refreshStyleConfig = async (sessionId: string) => {
     try {
-      const r = await apiFetch(`http://localhost:8000/style/preview/${sessionId}`);
+      const r = await apiFetch(`${API_BASE}/style/preview/${sessionId}`);
       if (!r.ok) return;
       const d = await r.json();
       const p = d.preview || {};
@@ -272,7 +273,7 @@ export default function Home() {
   const applyTheme = async (themeId: string) => {
     if (!result?.session_id) return;
     try {
-      const res = await apiFetch("http://localhost:8000/style/apply", {
+      const res = await apiFetch(`${API_BASE}/style/apply`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ session_id: result.session_id, theme: themeId }),
@@ -291,7 +292,7 @@ export default function Home() {
     workspace.setLastMode(null);
     try {
       const formData = new FormData(); formData.append("file", file);
-      const res = await apiFetch("http://localhost:8000/analyze", { method: "POST", body: formData });
+      const res = await apiFetch(`${API_BASE}/analyze`, { method: "POST", body: formData });
       if (!res.ok) throw new Error(`请求失败: ${res.statusText}`);
       workspace.setResult(await res.json());
     } catch (err) {
@@ -310,7 +311,7 @@ export default function Home() {
     const bodyKey = agentMode ? "message" : "question";
 
     try {
-      const res = await apiFetch(`http://localhost:8000/${endpoint}`, {
+      const res = await apiFetch(`${API_BASE}/${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -361,10 +362,14 @@ export default function Home() {
   };
 
   const handleDownload = (path: string) => {
-    window.open(`http://localhost:8000${path}`, "_blank");
+    window.open(`${API_BASE}${path}`, "_blank");
   };
 
-  if (authLoading || !user) {
+  useEffect(() => {
+    if (!authLoading && !user) router.push("/login");
+  }, [authLoading, user, router]);
+
+  if (authLoading) {
     return (
       <div className="flex-1 bg-zinc-50 dark:bg-black flex items-center justify-center">
         <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
@@ -372,17 +377,19 @@ export default function Home() {
     );
   }
 
+  if (!user) return null;
+
   return (
     <div className="flex flex-col flex-1 items-center bg-zinc-50 font-sans dark:bg-black">
       <main className="flex flex-col w-full max-w-6xl py-8 px-6">
         <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-bold text-black dark:text-zinc-50">AI Excel Data Agent</h1>
+          <h1 className="text-2xl font-bold text-black dark:text-zinc-50">AI Excel 数据助手</h1>
           {workspace.hasWorkspace && (
             <button
               onClick={workspace.newWorkspace}
               className="px-4 py-2 rounded-md bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 text-sm font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:text-red-600 dark:hover:text-red-400 transition-colors"
             >
-              + New Workspace
+              + 新建工作区
             </button>
           )}
         </div>
@@ -462,7 +469,7 @@ export default function Home() {
                 <div>
                   <h2 className="text-lg font-semibold text-black dark:text-zinc-50">数据对话</h2>
                   <p className="text-xs text-zinc-400 mt-0.5">
-                    {agentMode ? "Multi-Agent 模式：Master Agent 自动调度子Agent" : "AI 自动判断意图：简单问题→Chat，复杂任务→Workflow"}
+                    {agentMode ? "多智能体模式：主控 Agent 自动调度子 Agent" : "AI 自动判断意图：简单问题→对话，复杂任务→工作流"}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -471,7 +478,7 @@ export default function Home() {
                       onClick={() => workspace.setAgentMode(false)}
                       className={`px-3 py-1 text-xs font-medium transition-colors ${!agentMode ? "bg-black text-white dark:bg-white dark:text-black" : "bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700"}`}
                     >
-                      Chat
+                      对话
                     </button>
                     <button
                       onClick={() => workspace.setAgentMode(true)}

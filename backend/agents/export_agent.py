@@ -74,3 +74,8 @@ class ExportAgent(BaseAgent):
         context.setdefault("charts", [])
         context.setdefault("active_theme", "business")
         context.setdefault("style_overrides", {})
+
+
+# T27: register with agent registry
+from .registry import registry
+registry.register("ExportAgent", ExportAgent)

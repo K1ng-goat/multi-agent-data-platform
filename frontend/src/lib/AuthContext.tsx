@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
 import { getToken, setToken, clearToken } from "./api";
+import { API_BASE } from "./config";
 
 interface User {
   id: number;
@@ -41,7 +42,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 10000);
 
-    fetch("http://localhost:8000/me", {
+    fetch(`${API_BASE}/me`, {
       headers: { Authorization: `Bearer ${savedToken}` },
       signal: controller.signal,
     })

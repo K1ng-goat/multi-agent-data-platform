@@ -9,6 +9,7 @@ import {
 } from "recharts";
 import { useAuth } from "@/lib/AuthContext";
 import { apiFetch } from "@/lib/api";
+import { API_BASE } from "@/lib/config";
 
 // --- Types ---
 interface ChartData {
@@ -160,20 +161,26 @@ export default function ReportsPage() {
       return;
     }
     if (!user) return;
-    apiFetch("http://localhost:8000/reports")
+    apiFetch(`${API_BASE}/reports`)
       .then((r) => r.json())
       .then((d) => setReports(d.reports || []))
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [user, authLoading, router]);
 
-  if (authLoading || !user) {
+  useEffect(() => {
+    if (!authLoading && !user) router.push("/login");
+  }, [authLoading, user, router]);
+
+  if (authLoading) {
     return (
       <div className="flex-1 bg-zinc-50 dark:bg-black flex items-center justify-center">
         <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
+
+  if (!user) return null;
 
   if (selectedReport) {
     return <ReportDetail report={selectedReport} onBack={() => setSelectedReport(null)} />;
@@ -196,9 +203,9 @@ export default function ReportsPage() {
         <div className="text-center max-w-md">
           <span className="text-5xl mb-4 block">📋</span>
           <h2 className="text-xl font-bold text-zinc-800 dark:text-zinc-200 mb-2">历史成果中心</h2>
-          <p className="text-sm text-zinc-500 mb-6">暂无历史分析成果。在 Workspace 中上传并分析 Excel 文件后，所有分析报告、图表和洞察将在此统一保存。</p>
+          <p className="text-sm text-zinc-500 mb-6">暂无历史分析成果。在工作区中上传并分析 Excel 文件后，所有分析报告、图表和洞察将在此统一保存。</p>
           <Link href="/" className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors">
-            前往 Workspace →
+            前往工作区 →
           </Link>
         </div>
       </div>
@@ -209,7 +216,7 @@ export default function ReportsPage() {
     <div className="flex-1 bg-zinc-50 dark:bg-black">
       <div className="max-w-7xl mx-auto py-6 px-6 space-y-6">
         <div>
-          <h1 className="text-xl font-bold text-zinc-900 dark:text-zinc-50">Reports</h1>
+          <h1 className="text-xl font-bold text-zinc-900 dark:text-zinc-50">历史报告</h1>
           <p className="text-xs text-zinc-400 mt-0.5">历史分析成果 · 共 {reports.length} 条记录</p>
         </div>
 

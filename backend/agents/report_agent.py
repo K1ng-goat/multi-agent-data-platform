@@ -91,3 +91,8 @@ class ReportAgent(BaseAgent):
             )
             resp.raise_for_status()
             return resp.json()["choices"][0]["message"]["content"]
+
+
+# T27: register with agent registry
+from .registry import registry
+registry.register("ReportAgent", ReportAgent)

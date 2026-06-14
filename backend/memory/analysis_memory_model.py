@@ -1,6 +1,6 @@
 """AnalysisMemory — long-term analysis KPI, trend, anomaly history."""
 from __future__ import annotations
-from sqlalchemy import Column, Integer, String
+from sqlalchemy import Column, Integer, String, Text
 from database import Base
 
 
@@ -9,10 +9,10 @@ class AnalysisMemory(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, nullable=False, index=True)
-    session_id = Column(String, nullable=False, index=True)
-    filename = Column(String, default="")
-    kpi_json = Column(String, default="")           # JSON: key metrics extracted from analysis
-    trend_json = Column(String, default="")          # JSON: trend data summary
-    anomaly_json = Column(String, default="")        # JSON: anomaly findings
-    report_content = Column(String, default="")      # Full report markdown
-    created_at = Column(String, default="")
+    session_id = Column(String(255), nullable=False, index=True)
+    filename = Column(String(255), default="")
+    kpi_json = Column(Text)
+    trend_json = Column(Text)
+    anomaly_json = Column(Text)
+    report_content = Column(Text)
+    created_at = Column(String(255), default="")

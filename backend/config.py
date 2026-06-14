@@ -18,8 +18,16 @@ CORS_ORIGINS = [
 CORS_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1):\d{4}$"
 
 # ── Database ──────────────────────────────────────────────────────
+DB_ENGINE = os.getenv("DB_ENGINE", "sqlite")  # "sqlite" | "mysql"
 DB_FILENAME = "data_agent.db"
 DB_URL = f"sqlite:///{os.path.join(os.path.dirname(__file__), DB_FILENAME)}"
+
+# MySQL (only used when DB_ENGINE=mysql)
+MYSQL_HOST = os.getenv("MYSQL_HOST", "localhost")
+MYSQL_PORT = os.getenv("MYSQL_PORT", "3306")
+MYSQL_USER = os.getenv("MYSQL_USER", "data_agent")
+MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "changeme")
+MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "data_agent")
 
 # ── JWT ───────────────────────────────────────────────────────────
 JWT_SECRET = os.getenv("JWT_SECRET", "aiexcel-secret-key-change-in-production")

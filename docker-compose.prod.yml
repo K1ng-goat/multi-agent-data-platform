@@ -1,0 +1,97 @@
+# Production compose — self-contained or overlay
+# Usage standalone:  docker compose -f docker-compose.prod.yml up -d
+# Usage overlay:     docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: data-agent-backend
+    env_file:
+      - .env.production
+    ports:
+      - "8001:8000"
+    volumes:
+      - session_data:/app/session_data
+      - exports:/app/exports
+    environment:
+      - JWT_SECRET=${JWT_SECRET:-aiexcel-secret-key-change-in-production}
+      - DATABASE_TYPE=${DATABASE_TYPE:-sqlite}
+      - MYSQL_HOST=${MYSQL_HOST:-mysql}
+      - MYSQL_USER=${MYSQL_USER:-data_agent}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-changeme}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-data_agent}
+      - ENABLE_MONITORING=true
+      - ENABLE_NGINX=true
+      - ENABLE_CICD=true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/themes')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: always
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: data-agent-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8001
+    restart: always
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:alpine
+    container_name: data-agent-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    restart: always
+    depends_on:
+      - frontend
+      - backend
+
+  redis:
+    image: redis:7-alpine
+    container_name: data-agent-redis
+    restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  mysql:
+    image: mysql:8.0
+    container_name: data-agent-mysql
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: data_agent
+      MYSQL_USER: data_agent
+      MYSQL_PASSWORD: changeme
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+volumes:
+  session_data:
+  exports:
+  mysql_data:

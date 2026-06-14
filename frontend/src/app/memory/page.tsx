@@ -1,8 +1,10 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/AuthContext";
 import { apiFetch } from "@/lib/api";
+import { API_BASE } from "@/lib/config";
 
 interface MemorySummary {
   total_analyses: number;
@@ -16,6 +18,7 @@ interface MemorySummary {
 
 export default function MemoryPage() {
   const { user, loading: authLoading } = useAuth();
+  const router = useRouter();
   const [summary, setSummary] = useState<MemorySummary | null>(null);
   const [preferences, setPreferences] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -28,13 +31,13 @@ export default function MemoryPage() {
     if (!user) return;
     setLoading(true);
     setError("");
-    apiFetch("http://localhost:8000/memory/summary")
+    apiFetch(`${API_BASE}/memory/summary`)
       .then(r => r.json())
       .then(d => setSummary(d))
       .catch(() => setError("无法加载 AI 记忆摘要"))
       .finally(() => setLoading(false));
 
-    apiFetch("http://localhost:8000/memory/preferences")
+    apiFetch(`${API_BASE}/memory/preferences`)
       .then(r => r.json())
       .then(d => setPreferences(d.preferences || {}))
       .catch(() => {});
@@ -49,7 +52,7 @@ export default function MemoryPage() {
     setClearing(type);
     setError("");
     try {
-      const res = await apiFetch("http://localhost:8000/memory/clear", {
+      const res = await apiFetch(`${API_BASE}/memory/clear`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type }),
@@ -69,7 +72,7 @@ export default function MemoryPage() {
 
   const handleSavePreference = async (key: string) => {
     try {
-      await apiFetch("http://localhost:8000/memory/preferences", {
+      await apiFetch(`${API_BASE}/memory/preferences`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ category: "preference", key, value: editValue }),
@@ -85,7 +88,7 @@ export default function MemoryPage() {
 
   const handleDeletePreference = async (key: string) => {
     try {
-      await apiFetch("http://localhost:8000/memory/preferences", {
+      await apiFetch(`${API_BASE}/memory/preferences`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ key }),
@@ -100,12 +103,12 @@ export default function MemoryPage() {
   };
 
   const handleAddPreference = () => {
-    const key = prompt("输入偏好名称（例如：preferred_chart_type）：");
+    const key = prompt("输入偏好名称（例如：图表类型偏好）：");
     if (!key || !key.trim()) return;
     const value = prompt("输入偏好值：");
     if (value === null) return;
     setEditingKey(null);
-    apiFetch("http://localhost:8000/memory/preferences", {
+    apiFetch(`${API_BASE}/memory/preferences`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ category: "preference", key: key.trim(), value }),
@@ -114,7 +117,11 @@ export default function MemoryPage() {
       .catch(() => setError("添加偏好失败"));
   };
 
-  if (authLoading || !user) {
+  useEffect(() => {
+    if (!authLoading && !user) router.push("/login");
+  }, [authLoading, user, router]);
+
+  if (authLoading) {
     return (
       <div className="flex-1 bg-zinc-50 dark:bg-black flex items-center justify-center">
         <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
@@ -122,12 +129,14 @@ export default function MemoryPage() {
     );
   }
 
+  if (!user) return null;
+
   return (
     <div className="flex-1 bg-zinc-50 dark:bg-black overflow-auto">
       <div className="max-w-4xl mx-auto py-8 px-6 space-y-8">
         {/* Header */}
         <div>
-          <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-50">AI Memory</h1>
+          <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-50">AI 记忆</h1>
           <p className="text-sm text-zinc-500 mt-1">AI 记忆与偏好系统 — 管理 AI 学到的知识和个人偏好</p>
         </div>
 
@@ -169,7 +178,7 @@ export default function MemoryPage() {
             </>
           ) : (
             <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-8 text-center">
-              <p className="text-sm text-zinc-400">暂无记忆数据。在 Workspace 中分析 Excel 文件后，AI 会自动记录分析结果。</p>
+              <p className="text-sm text-zinc-400">暂无记忆数据。在工作区中分析 Excel 文件后，AI 会自动记录分析结果。</p>
             </div>
           )}
         </section>
@@ -246,7 +255,7 @@ export default function MemoryPage() {
 
         {/* Memory Management */}
         <section>
-          <h2 className="text-lg font-semibold text-zinc-800 dark:text-zinc-200 mb-4">Memory 管理</h2>
+          <h2 className="text-lg font-semibold text-zinc-800 dark:text-zinc-200 mb-4">记忆管理</h2>
           <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-5 space-y-4">
             <p className="text-xs text-zinc-500">管理 AI 记忆数据。清除操作不可撤销，请谨慎操作。</p>
             <div className="flex flex-wrap gap-3">

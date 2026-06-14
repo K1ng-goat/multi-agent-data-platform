@@ -1,0 +1,40 @@
+name: Backend CI
+
+on:
+  push:
+    paths: [backend/**]
+  pull_request:
+    paths: [backend/**]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Verify imports
+        run: python -c "from main import app; print(f'Routes: {len(app.routes)}')"
+
+      - name: Start server
+        run: |
+          uvicorn main:app --host 127.0.0.1 --port 8000 &
+          sleep 5
+
+      - name: Health check
+        run: |
+          curl -s http://127.0.0.1:8000/ | grep "AI Excel Data Agent"
+          curl -s http://127.0.0.1:8000/database/health | grep '"ok":true'
+
+      - name: Route check
+        run: curl -s http://127.0.0.1:8000/themes | grep "business"

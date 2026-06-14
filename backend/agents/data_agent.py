@@ -112,3 +112,8 @@ Keep each section within 150-200 Chinese characters."""
             "anomaly": analysis.get("anomaly", ""),
             "trend": analysis.get("trend", ""),
         }
+
+
+# T27: register with agent registry
+from .registry import registry
+registry.register("DataAgent", DataAgent)

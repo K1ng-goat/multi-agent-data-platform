@@ -1,0 +1,9 @@
+{
+  "tools": {
+    "Read":  { "autoApprove": true },
+    "Edit":  { "autoApprove": true },
+    "Write": { "autoApprove": true },
+    "Grep":  { "autoApprove": true },
+    "Glob":  { "autoApprove": true }
+  }
+}

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/AuthContext";
 import { setToken } from "@/lib/api";
+import { API_BASE } from "@/lib/config";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -24,7 +25,7 @@ export default function RegisterPage() {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 15000);
 
-      const res = await fetch("http://localhost:8000/register", {
+      const res = await fetch(`${API_BASE}/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, email, password }),

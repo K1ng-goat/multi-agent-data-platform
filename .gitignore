@@ -19,11 +19,14 @@ env/
 
 # ===== SQLite Database =====
 *.db
+*.db-shm
+*.db-wal
 *.sqlite3
 
-# ===== Uploads / Exports =====
+# ===== Uploads / Exports / Session Data =====
 uploads/
 backend/exports/
+backend/session_data/
 *.xlsx
 !requirements.txt
 

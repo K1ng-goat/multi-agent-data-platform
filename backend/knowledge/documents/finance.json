@@ -1,0 +1,38 @@
+[
+  {
+    "id": "fin_001",
+    "category": "finance",
+    "title": "ROE (Return on Equity)",
+    "content": "ROE = Net Income / Shareholder Equity. Measures profitability relative to equity. Higher is better, industry-dependent.",
+    "keywords": [
+      "roe",
+      "return on equity",
+      "profitability",
+      "equity"
+    ]
+  },
+  {
+    "id": "fin_002",
+    "category": "finance",
+    "title": "Revenue Growth Rate",
+    "content": "Revenue Growth = (Current - Previous) / Previous * 100. Indicates business expansion speed.",
+    "keywords": [
+      "revenue",
+      "growth",
+      "yoy",
+      "expansion"
+    ]
+  },
+  {
+    "id": "fin_003",
+    "category": "finance",
+    "title": "Gross Margin",
+    "content": "Gross Margin = (Revenue - COGS) / Revenue * 100. Higher margins indicate stronger pricing power.",
+    "keywords": [
+      "margin",
+      "gross",
+      "cogs",
+      "profitability"
+    ]
+  }
+]

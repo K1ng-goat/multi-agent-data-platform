@@ -57,3 +57,8 @@ class StyleAgent(BaseAgent):
         """Parse style parameters from user message."""
         import theme_service as ts
         return ts.quick_parse_style(user_message)
+
+
+# T27: register with agent registry
+from .registry import registry
+registry.register("StyleAgent", StyleAgent)

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/AuthContext";
 import { setToken } from "@/lib/api";
+import { API_BASE } from "@/lib/config";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -23,7 +24,7 @@ export default function LoginPage() {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 15000);
 
-      const res = await fetch("http://localhost:8000/login", {
+      const res = await fetch(`${API_BASE}/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
@@ -57,7 +58,7 @@ export default function LoginPage() {
         <div className="text-center mb-6">
           <span className="w-10 h-10 rounded bg-blue-500 flex items-center justify-center text-white text-xs font-bold mx-auto mb-3">AI</span>
           <h1 className="text-xl font-bold text-zinc-900 dark:text-zinc-50">登录</h1>
-          <p className="text-xs text-zinc-400 mt-1">AI Excel Data Agent</p>
+          <p className="text-xs text-zinc-400 mt-1">AI Excel 数据助手</p>
         </div>
 
         {error && (

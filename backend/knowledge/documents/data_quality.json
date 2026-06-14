@@ -1,0 +1,27 @@
+[
+  {
+    "id": "dq_001",
+    "category": "data_quality",
+    "title": "Missing Value Treatment",
+    "content": "Options: drop rows, fill with mean/median/mode, forward-fill for time series, or use ML imputation.",
+    "keywords": [
+      "missing",
+      "null",
+      "nan",
+      "imputation",
+      "drop"
+    ]
+  },
+  {
+    "id": "dq_002",
+    "category": "data_quality",
+    "title": "Duplicate Detection",
+    "content": "Use df.duplicated() to find exact duplicates. For fuzzy duplicates, use string similarity or key-based matching.",
+    "keywords": [
+      "duplicate",
+      "unique",
+      "dedup",
+      "distinct"
+    ]
+  }
+]
